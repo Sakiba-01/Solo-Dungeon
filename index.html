@@ -127,10 +127,23 @@
         </div>
     </div>
     
+    <div class="w-full max-w-md px-4 mb-4 text-center">
+        <button onclick="toggleCloudPanel()" class="text-xs text-sky-300 underline">☁️ ตั้งค่าการเซฟผ่าน Google Sheets</button>
+        <div id="cloud-panel" style="display:none" class="mt-2 bg-black/60 p-3 rounded-lg border border-sky-700 text-left">
+            <div class="text-xs text-gray-300 mb-2">วาง URL ของ Google Apps Script Web App (ลงท้ายด้วย /exec) เพื่อเซฟข้ามเครื่องและดูอันดับรวม — วิธีสร้างดูในไฟล์ Code.gs</div>
+            <input id="cloud-url" type="text" placeholder="https://script.google.com/macros/s/.../exec" class="w-full px-2 py-1 rounded text-black text-sm">
+            <div class="flex gap-2 mt-2">
+                <button onclick="cloudSaveUrl()" class="flex-1 bg-sky-700 hover:bg-sky-600 rounded p-1 text-sm font-bold">บันทึกและทดสอบ</button>
+                <button onclick="cloudClearUrl()" class="bg-gray-700 hover:bg-gray-600 rounded p-1 px-3 text-sm">ปิดใช้งาน</button>
+            </div>
+            <div id="cloud-msg" class="text-xs mt-2"></div>
+        </div>
+    </div>
+    
     <div class="text-xs text-gray-500 mb-4 text-center px-4">* ไอดีใหม่เริ่มต้นด้วย 5,000 ทอง และจะได้เลือกอาชีพหลังเข้าสู่ระบบ (เลือกฟรีครั้งเดียว)</div>
     
 
-    <button onclick="startGame()" class="px-10 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl text-2xl font-bold transition-all transform hover:scale-110 shadow-[0_0_25px_rgba(59,130,246,0.6)] hover:shadow-[0_0_40px_rgba(147,51,234,0.9)] border border-blue-400/30">
+    <button id="login-btn" onclick="startGame()" class="px-10 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl text-2xl font-bold transition-all transform hover:scale-110 shadow-[0_0_25px_rgba(59,130,246,0.6)] hover:shadow-[0_0_40px_rgba(147,51,234,0.9)] border border-blue-400/30">
         เข้าสู่ระบบ (LOGIN)
     </button>
 </div>
@@ -189,6 +202,7 @@
     
     <div class="absolute top-4 right-4 flex flex-col items-end gap-2 pointer-events-auto">
         <div class="flex gap-2">
+            <span id='cloud-chip' onclick='cloudManualSync()' class='cursor-pointer border border-gray-500 px-2 py-1 rounded text-xs font-bold text-white select-none' style='background:#374151' title=''>💾 ในเครื่อง</span>
             <button id='snd-btn' onclick='toggleSound()' class='bg-gray-800/80 hover:bg-gray-700 border border-gray-500 px-3 py-1 rounded text-sm font-bold text-white transition'>🔊</button>
             <button onclick="showDashboard()" class="bg-blue-800/80 hover:bg-blue-600 text-white font-bold py-2 px-3 rounded border border-blue-500 transition shadow-lg flex items-center gap-2 text-sm">
                 🏆 ดูอันดับ
@@ -3930,6 +3944,233 @@
     window.addEventListener('keydown', e => {
         if (e.key === 'Escape' && [...document.querySelectorAll('.modal')].some(m => m.style.display === 'block')) closeModals();
     });
+
+
+        // ==========================================
+    // CLOUD SAVE — Google Sheets (via Google Apps Script Web App)
+    // ==========================================
+    // วาง URL ของ Web App (ลงท้ายด้วย /exec) ตรงนี้ เพื่อเปิดใช้งานให้ผู้เล่นทุกคนอัตโนมัติ
+    // หรือให้ผู้เล่นตั้งเองได้ที่ปุ่ม ☁️ หน้าล็อกอิน
+    const CLOUD_DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbwq4eDrhJg7RTyoShYBtsnyxT4SiAftU519kytcNtD5ceqWgV6uOc62jJj8HpZVJSDC/exec';
+    const CLOUD_MIN_GAP = 20000;   // ซิงก์อัตโนมัติอย่างน้อยห่างกัน 20 วินาที (กันโควตา Apps Script)
+    const cloud = { session: null, dirty: false, last: 0, timer: null, busy: false, state: 'off', lastOk: 0 };
+
+    function sha256(str) {
+        const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+        let H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+        const bytes = Array.from(new TextEncoder().encode(str)), bits = bytes.length * 8;
+        bytes.push(0x80); while (bytes.length % 64 !== 56) bytes.push(0);
+        [Math.floor(bits / 4294967296), bits >>> 0].forEach(v => bytes.push((v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255));
+        const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+        for (let i = 0; i < bytes.length; i += 64) {
+            const w = new Array(64);
+            for (let t = 0; t < 16; t++) w[t] = (bytes[i + 4 * t] << 24) | (bytes[i + 4 * t + 1] << 16) | (bytes[i + 4 * t + 2] << 8) | bytes[i + 4 * t + 3];
+            for (let t = 16; t < 64; t++) {
+                const s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3), s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+                w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+            }
+            let [a, b, c, d, e, f, g, h] = H;
+            for (let t = 0; t < 64; t++) {
+                const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25), ch = (e & f) ^ (~e & g), t1 = (h + S1 + ch + K[t] + w[t]) | 0;
+                const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22), mj = (a & b) ^ (a & c) ^ (b & c), t2 = (S0 + mj) | 0;
+                h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+            }
+            const add = [a, b, c, d, e, f, g, h];
+            H = H.map((v, k) => (v + add[k]) | 0);
+        }
+        return H.map(v => (v >>> 0).toString(16).padStart(8, '0')).join('');
+    }
+    const cloudHash = (name, pin) => sha256('dungeon-solo|' + String(name).normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase() + '|' + pin);
+    const cloudUrl = () => { try { return localStorage.getItem('dungeon_cloud_url') || CLOUD_DEFAULT_URL; } catch (e) { return CLOUD_DEFAULT_URL; } };
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    function cloudSetState(s, msg) {
+        cloud.state = s;
+        const chip = document.getElementById('cloud-chip'); if (!chip) return;
+        const m = { off: ['💾 ในเครื่อง', '#374151', 'ยังไม่ได้เชื่อม Google Sheets — เซฟอยู่ในเบราว์เซอร์นี้เท่านั้น'],
+            idle: ['☁️ พร้อม', '#075985', 'เชื่อม Google Sheets แล้ว (ยังไม่ได้ล็อกอิน)'],
+            sync: ['☁️ กำลังซิงก์…', '#92400e', 'กำลังส่งข้อมูลไป Google Sheets'],
+            ok: ['☁️ ซิงก์แล้ว', '#166534', 'ซิงก์ล่าสุด ' + new Date(cloud.lastOk || Date.now()).toLocaleTimeString() + ' (คลิกเพื่อซิงก์ทันที)'],
+            offline: ['☁️ ออฟไลน์', '#7f1d1d', 'เชื่อมต่อไม่ได้ — เซฟในเครื่องไว้แล้ว จะลองส่งใหม่เอง (คลิกเพื่อลองทันที)'],
+            warn: ['⚠️ ชื่อซ้ำ', '#7f1d1d', msg || 'มีปัญหากับบัญชีบนคลาวด์'] }[s] || ['☁️', '#374151', ''];
+        chip.textContent = m[0]; chip.style.background = m[1]; chip.title = msg && s !== 'warn' ? msg : m[2];
+    }
+    async function cloudCall(action, payload, timeout) {
+        const url = cloudUrl(); if (!url) return null;
+        const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, tm = setTimeout(() => { if (ctl) ctl.abort(); }, timeout || 9000);
+        try {
+            const r = await fetch(url, { method: 'POST', body: JSON.stringify(Object.assign({ action }, payload || {})), signal: ctl ? ctl.signal : undefined });
+            return await r.json();
+        } catch (e) { return null; } finally { clearTimeout(tm); }
+    }
+    function cloudSchedule() {
+        if (cloud.timer || !cloud.session || cloud.session.blocked || !cloudUrl()) return;
+        cloud.timer = setTimeout(() => { cloud.timer = null; cloudPush(false); }, CLOUD_MIN_GAP);
+    }
+    async function cloudPush(force, timeout) {
+        if (!cloud.session || cloud.session.blocked || !cloudUrl()) return false;
+        if (cloud.busy) { cloud.dirty = true; return false; }
+        if (!force && Date.now() - cloud.last < CLOUD_MIN_GAP) { cloudSchedule(); return false; }
+        cloud.busy = true; cloudSetState('sync');
+        const st = playerStats; st._ts = Date.now();
+        const res = await cloudCall('save', { name: cloud.session.name, hash: cloud.session.hash, save: JSON.stringify(st), updated: st._ts }, timeout);
+        cloud.busy = false; cloud.last = Date.now();
+        if (res && res.ok) { cloud.dirty = false; cloud.lastOk = Date.now(); cloudSetState('ok'); return true; }
+        if (res && res.error === 'wrongpin') { cloud.session.blocked = true; cloudSetState('warn', 'ชื่อนี้ถูกใช้บนคลาวด์แล้วด้วยรหัสผ่านอื่น — ข้อมูลนี้จะเซฟในเครื่องเท่านั้น'); return false; }
+        cloud.dirty = true; cloudSetState('offline'); cloudSchedule();
+        return false;
+    }
+    function cloudManualSync() { if (cloud.session) { cloud.session.blocked = false; saveGame(); cloudPush(true); } }
+
+    // ---- wrap saveGame: stamp + queue a cloud push ----
+    (function installCloud() {
+        const sg = saveGame;
+        saveGame = function () {
+            if (playerStats && playerStats.name && playerStats.name !== 'Player') playerStats._ts = Date.now();
+            const r = sg();
+            if (cloud.session && cloudUrl()) { cloud.dirty = true; cloudSchedule(); }
+            return r;
+        };
+        const lo = logout;
+        logout = async function () { saveGame(); await cloudPush(true, 3500); location.reload(); };
+
+        // ---- login: cloud first, local as fallback ----
+        const startLocal = startGame;
+        startGame = async function () {
+            if (!cloudUrl()) return startLocal();
+            const name = String(document.getElementById('player-name').value).normalize('NFC').replace(/\s+/g, ' ').trim();
+            const pin = document.getElementById('player-pin').value.trim();
+            if (!name || !/^\d{6}$/.test(pin)) return startLocal();      // ให้ระบบเดิมแจ้งเตือนข้อมูลไม่ครบ
+            const btn = document.getElementById('login-btn');
+            if (btn) { btn.disabled = true; btn.textContent = '☁️ กำลังเชื่อมต่อ...'; }
+            cloudSetState('sync');
+            const hash = cloudHash(name, pin);
+            const res = await cloudCall('login', { name, hash });
+            if (btn) { btn.disabled = false; btn.textContent = 'เข้าสู่ระบบ (LOGIN)'; }
+            if (res && res.ok === false && res.error === 'wrongpin') {
+                cloudSetState('idle');
+                alert('❌ รหัสผ่านไม่ถูกต้อง (บัญชีนี้มีอยู่บน Google Sheets แล้ว)');
+                return;
+            }
+            if (res && res.ok && res.save) {
+                try {
+                    const cs = JSON.parse(res.save), key = res.name || name;
+                    const accounts = JSON.parse(localStorage.getItem('dungeon_accounts') || '{}');
+                    const loc = accounts[key];
+                    if (!loc || loc.pin !== pin || (loc.stats._ts || 0) <= (res.updated || 0)) {
+                        accounts[key] = { pin, stats: cs };
+                        localStorage.setItem('dungeon_accounts', JSON.stringify(accounts));
+                    }
+                } catch (e) {}
+                cloudSetState('ok');
+            } else if (!res) cloudSetState('offline');
+            else cloudSetState('idle');                                  // notfound → สร้างใหม่แล้วอัปโหลดทีหลัง
+            await startLocal();
+            if (playerStats.name && playerStats.name !== 'Player') {
+                cloud.session = { name: playerStats.name, hash, blocked: false };
+                cloud.dirty = true; cloudPush(true);
+            }
+        };
+
+        // ---- Time Attack → Google Sheets ----
+        const cd = completeDungeon;
+        completeDungeon = function () {
+            const d = gameState.dungeon, t = d ? d.time : 0, rank = d ? d.rank : null, boss = d ? (d.boss || '') : '';
+            const r = cd();
+            if (cloud.session && !cloud.session.blocked && rank) {
+                cloudCall('time', { name: cloud.session.name, hash: cloud.session.hash, rank, time: t, boss });
+                cloudPush(true);
+            }
+            return r;
+        };
+
+        // ---- dashboard: local / global tabs ----
+        const sd = showDashboard;
+        showDashboard = function () { sd(); ensureDashTabs(); if (dashMode === 'cloud') loadCloudBoard(); updateDashTabs(); };
+
+        window.addEventListener('online', () => { if (cloud.dirty) cloudPush(true); });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden' && cloud.session && !cloud.session.blocked && cloud.dirty && cloudUrl()) {
+                try {
+                    playerStats._ts = Date.now();
+                    navigator.sendBeacon(cloudUrl(), JSON.stringify({ action: 'save', name: cloud.session.name, hash: cloud.session.hash, save: JSON.stringify(playerStats), updated: playerStats._ts }));
+                } catch (e) {}
+            }
+        });
+        cloudSetState(cloudUrl() ? 'idle' : 'off');
+    })();
+
+    // ---------- dashboard tabs ----------
+    let dashMode = 'local';
+    function ensureDashTabs() {
+        const grid = document.getElementById('dash-grid'); if (!grid || document.getElementById('dash-tabs')) return;
+        const d = document.createElement('div'); d.id = 'dash-tabs'; d.className = 'flex gap-2 mb-3';
+        d.innerHTML = `<button id='dash-tab-local' class='px-3 py-1 rounded text-sm font-bold border' onclick='setDashMode("local")'>💾 ในเครื่อง</button><button id='dash-tab-cloud' class='px-3 py-1 rounded text-sm font-bold border' onclick='setDashMode("cloud")'>☁️ ทุกคน (Google Sheets)</button><span id='dash-note' class='text-xs text-gray-400 self-center'></span>`;
+        grid.parentNode.insertBefore(d, grid);
+    }
+    function updateDashTabs() {
+        const a = document.getElementById('dash-tab-local'), b = document.getElementById('dash-tab-cloud'); if (!a || !b) return;
+        const on = 'bg-blue-700 border-blue-400 text-white', off = 'bg-gray-800 border-gray-600 text-gray-300';
+        a.className = 'px-3 py-1 rounded text-sm font-bold border ' + (dashMode === 'local' ? on : off);
+        b.className = 'px-3 py-1 rounded text-sm font-bold border ' + (dashMode === 'cloud' ? on : off);
+    }
+    function setDashMode(m) {
+        dashMode = m;
+        if (m === "local") { showDashboard(); }
+        else { loadCloudBoard(); updateDashTabs(); }
+    }
+    function boardHtml(data) {
+        let html = '';
+        ['S', 'A', 'B', 'C', 'D', 'E'].forEach(r => {
+            html += `<div class="bg-black/60 p-3 rounded border border-gray-600"><h3 class="text-xl font-bold text-center rank-${r} mb-2 border-b border-gray-700/50 pb-1">แรงก์ ${r}</h3>`;
+            const recs = (data && data[r]) || [];
+            if (!recs.length) html += `<div class="text-center text-gray-500 text-sm py-4">-- ยังไม่มีสถิติ --</div>`;
+            recs.forEach((rec, i) => {
+                const color = i === 0 ? 'text-yellow-400 font-bold text-base' : (i === 1 ? 'text-gray-300' : (i === 2 ? 'text-yellow-600' : 'text-gray-400'));
+                const icon = i === 0 ? '🥇' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : `#${i + 1}`));
+                html += `<div class="flex justify-between items-center ${color} text-sm py-1 border-b border-gray-700/50"><span class="truncate pr-2">${icon} ${esc(rec.name)}</span><span class="font-mono tracking-wider">${fmtTime(rec.time)}</span></div>`;
+            });
+            html += `</div>`;
+        });
+        return html;
+    }
+    async function loadCloudBoard() {
+        const grid = document.getElementById('dash-grid'), note = document.getElementById('dash-note'); if (!grid) return;
+        updateDashTabs();
+        if (!cloudUrl()) { grid.innerHTML = `<div class='text-gray-400 text-sm col-span-3'>ยังไม่ได้เชื่อม Google Sheets (ตั้งค่าที่หน้าล็อกอิน ปุ่ม ☁️)</div>`; return; }
+        grid.innerHTML = `<div class='text-gray-400 text-sm col-span-3'>กำลังโหลดอันดับ...</div>`;
+        const res = await cloudCall('board', {});
+        if (dashMode !== 'cloud') return;
+        if (res && res.ok) { grid.innerHTML = boardHtml(res.board); if (note) note.textContent = 'อัปเดตจากชีต (แคช ~1 นาที)'; }
+        else grid.innerHTML = `<div class='text-red-400 text-sm col-span-3'>โหลดอันดับไม่สำเร็จ — เชื่อมต่อไม่ได้</div>`;
+    }
+
+    // ---------- login-screen setup panel ----------
+    function toggleCloudPanel() {
+        const p = document.getElementById('cloud-panel'); if (!p) return;
+        p.style.display = p.style.display === 'none' ? 'block' : 'none';
+        document.getElementById('cloud-url').value = (function () { try { return localStorage.getItem('dungeon_cloud_url') || ''; } catch (e) { return ''; } })();
+        const m = document.getElementById('cloud-msg'); if (m) m.textContent = cloudUrl() ? (CLOUD_DEFAULT_URL && !localStorage.getItem('dungeon_cloud_url') ? '✔ ใช้ URL ที่ตั้งไว้ในเกม' : '✔ ตั้งค่าไว้แล้ว') : 'ยังไม่ได้ตั้งค่า (เซฟในเครื่องเท่านั้น)';
+    }
+    async function cloudSaveUrl() {
+        const input = document.getElementById('cloud-url'), msg = document.getElementById('cloud-msg'), v = input.value.trim();
+        if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(v)) { msg.style.color = '#f87171'; msg.textContent = '❌ URL ไม่ถูกต้อง ต้องเป็นรูปแบบ https://script.google.com/macros/s/…/exec'; return; }
+        const old = (function () { try { return localStorage.getItem('dungeon_cloud_url'); } catch (e) { return null; } })();
+        try { localStorage.setItem('dungeon_cloud_url', v); } catch (e) {}
+        msg.style.color = '#fde68a'; msg.textContent = 'กำลังทดสอบการเชื่อมต่อ...';
+        const res = await cloudCall('ping', {}, 10000);
+        if (res && res.ok) { msg.style.color = '#4ade80'; msg.textContent = '✅ เชื่อมต่อ Google Sheets สำเร็จ! ล็อกอินได้เลย'; cloudSetState('idle'); }
+        else {
+            try { if (old) localStorage.setItem('dungeon_cloud_url', old); else localStorage.removeItem('dungeon_cloud_url'); } catch (e) {}
+            msg.style.color = '#f87171'; msg.textContent = '❌ เชื่อมต่อไม่ได้ — ตรวจสอบว่า Deploy เป็น Web app / ให้สิทธิ์ "Anyone" แล้ว และเปิดเกมจาก GitHub Pages หรือไฟล์ในเครื่อง (หน้าพรีวิวของ Claude บล็อกการเชื่อมต่อภายนอก)';
+        }
+    }
+    function cloudClearUrl() {
+        try { localStorage.removeItem('dungeon_cloud_url'); } catch (e) {}
+        cloud.session = null; cloudSetState(cloudUrl() ? 'idle' : 'off');
+        const msg = document.getElementById('cloud-msg'); if (msg) { msg.style.color = '#d1d5db'; msg.textContent = cloudUrl() ? 'ล้างค่าแล้ว (ใช้ URL ที่ตั้งไว้ในเกม)' : 'ปิดการซิงก์แล้ว (เซฟในเครื่องเท่านั้น)'; }
+        const input = document.getElementById('cloud-url'); if (input) input.value = '';
+    }
 
 
     window.onload = init;
